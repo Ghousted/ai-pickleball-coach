@@ -6,10 +6,31 @@ import { headers } from "next/headers";
 import { eq } from "drizzle-orm";
 import { getDb, schema } from "./db";
 
+const DEV_SECRET = "dev-only-secret-not-for-production";
+
+/**
+ * The key that signs session cookies. In production it must come from BETTER_AUTH_SECRET:
+ * a missing or short secret stops the app instead of falling back to a key in the repo.
+ */
+function authSecret(): string {
+  const secret = process.env.BETTER_AUTH_SECRET?.trim();
+  if (secret) {
+    if (process.env.NODE_ENV === "production" && (secret.length < 32 || secret === DEV_SECRET)) {
+      throw new Error("BETTER_AUTH_SECRET is too weak. Use at least 32 characters: openssl rand -base64 32");
+    }
+    return secret;
+  }
+  if (process.env.NODE_ENV === "production") {
+    throw new Error("BETTER_AUTH_SECRET is not set. Generate one with: openssl rand -base64 32");
+  }
+  return DEV_SECRET;
+}
+
 async function createAuth() {
+  const secret = authSecret();
   const db = await getDb();
   return betterAuth({
-    secret: process.env.BETTER_AUTH_SECRET ?? "dev-only-secret-change-me-in-production-please",
+    secret,
     baseURL: process.env.BETTER_AUTH_URL,
     database: drizzleAdapter(db, {
       provider: "pg",
