@@ -12,7 +12,11 @@ export const metadata: Metadata = {
   title: "AI Coach",
   description: "Film a clip. Get coached. Earn XP.",
   appleWebApp: { capable: true, title: "AI Coach", statusBarStyle: "black-translucent" },
-  icons: { icon: "/icon.svg", apple: "/apple-icon.png" },
+  icons: {
+    // src/app/favicon.ico adds the .ico link. The SVG is for browsers that prefer it.
+    icon: [{ url: "/favicon.svg", type: "image/svg+xml" }],
+    apple: "/apple-icon.png",
+  },
 };
 
 export const viewport: Viewport = {
