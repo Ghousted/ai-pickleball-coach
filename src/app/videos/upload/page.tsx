@@ -76,9 +76,19 @@ function Upload() {
           <label className="label" htmlFor="move">
             The move in this clip
           </label>
-          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <div className="chip-slider" role="radiogroup" aria-label="The move in this clip">
             {MOVES.map((m) => (
-              <button key={m} type="button" className={`seg${move === m ? " on" : ""}`} style={{ height: 40, padding: "0 14px", borderRadius: 999, fontSize: 13 }} onClick={() => setMove(m)}>
+              <button
+                key={m}
+                type="button"
+                role="radio"
+                aria-checked={move === m}
+                className={`seg${move === m ? " on" : ""}`}
+                onClick={(e) => {
+                  setMove(m);
+                  e.currentTarget.scrollIntoView({ behavior: "smooth", block: "nearest", inline: "center" });
+                }}
+              >
                 {m}
               </button>
             ))}

@@ -154,6 +154,13 @@ html, body { background: #dfe3e6; height: 100%; }
 .input:focus { border-color: var(--navy); }
 .seg { border-radius: 16px; border: 2px solid var(--line); background: #fff; color: var(--ink-700); box-shadow: 0 3px 0 var(--line); cursor: pointer; font-weight: 700; font-size: 14px; font-family: inherit; }
 .seg.on { border-color: var(--navy); background: var(--navy); color: #fff; box-shadow: 0 3px 0 var(--navy); }
+/* One row of chips that slides sideways. It runs to the screen edges and hides the scrollbar. */
+.chip-slider {
+  display: flex; gap: 8px; overflow-x: auto; scroll-snap-type: x proximity; scrollbar-width: none;
+  margin: 0 -16px; padding: 2px 16px 6px; scroll-padding-inline: 16px; -webkit-overflow-scrolling: touch;
+}
+.chip-slider::-webkit-scrollbar { display: none; }
+.chip-slider > .seg { flex: 0 0 auto; height: 40px; padding: 0 16px; border-radius: 999px; font-size: 13px; white-space: nowrap; scroll-snap-align: start; }
 .grid3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
 .grid7 { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 6px; }
 .grid2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
