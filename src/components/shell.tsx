@@ -2,7 +2,7 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from "react";
-import { useApi } from "@/lib/client";
+import { markInAppNavigation, useApi } from "@/lib/client";
 import { Icon, Logo } from "./icons";
 
 export type Me = {
@@ -18,7 +18,7 @@ export type Me = {
   questProgress?: Record<string, number>;
 };
 
-const MeCtx = createContext<{ me: Me | null; reload: () => void }>({ me: null, reload: () => {} });
+const MeCtx = createContext<{ me: Me | null; meError: string | null; reload: () => void }>({ me: null, meError: null, reload: () => {} });
 export const useMe = () => useContext(MeCtx);
 
 const TAB_ROOTS = ["/quests", "/videos", "/journey", "/you"];
@@ -32,7 +32,7 @@ const TABS = [
 export function Shell({ children }: { children: ReactNode }) {
   const path = usePathname();
   const router = useRouter();
-  const { data: me, reload } = useApi<Me>("/api/me");
+  const { data: me, error: meErr, reload } = useApi<Me>("/api/me");
   const [toast, setToast] = useState<{ msg: string; id: number } | null>(null);
   const queue = useRef<string[]>([]);
   const timer = useRef<ReturnType<typeof setTimeout>>(undefined);
@@ -59,10 +59,7 @@ export function Shell({ children }: { children: ReactNode }) {
     window.addEventListener("coach:notes", onNotes);
     return () => window.removeEventListener("coach:notes", onNotes);
   }, [showNext]);
-  const dismissToast = () => {
-    queue.current = [];
-    showNext();
-  };
+  const dismissToast = () => showNext(); // the next note in the queue still shows
 
   // Screen transitions: tab switch, forward, or back (browser back button).
   const [dir, setDir] = useState("tab");
@@ -75,6 +72,7 @@ export function Shell({ children }: { children: ReactNode }) {
   }, []);
   useEffect(() => {
     if (prev.current === path) return;
+    markInAppNavigation();
     const tabToTab = TAB_ROOTS.includes(path) && TAB_ROOTS.some((t) => prev.current.startsWith(t)) && !path.startsWith(prev.current + "/");
     setDir(popped.current ? "back" : tabToTab ? "tab" : "fwd");
     popped.current = false;
@@ -92,7 +90,7 @@ export function Shell({ children }: { children: ReactNode }) {
   const L = me?.level;
 
   return (
-    <MeCtx.Provider value={{ me, reload }}>
+    <MeCtx.Provider value={{ me, meError: meErr?.message ?? null, reload }}>
       <div className="stage">
         <div className="app">
           {showHdr && L && (

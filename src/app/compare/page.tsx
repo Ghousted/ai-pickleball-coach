@@ -47,7 +47,7 @@ function ComparePick() {
 
   return (
     <div className="screen">
-      <TopBar title="Pick two videos" back={() => router.back()} />
+      <TopBar title="Pick two videos" back={{ fallback: "/videos" }} />
       <div className="pad">
         <CoachSays>
           {ready.length < 2 ? "Upload a second video to compare." : `Pick two clips of the same move and I'll show what changed.${first ? " +75 XP the first time." : ""}`}

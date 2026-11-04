@@ -1,6 +1,5 @@
 "use client";
 import { useParams, useRouter } from "next/navigation";
-import { useState } from "react";
 import { Icon } from "@/components/icons";
 import { Reviewing } from "@/components/reviewing";
 import { CoachSays, ErrorState, Loading, Note, TopBar } from "@/components/ui";
@@ -15,6 +14,7 @@ type C = {
   xp: number;
   flagged: boolean;
   pair: { id: string; move: string; durationSec: number; createdAt: string; tipCount: number }[];
+  statusAt: string;
 };
 
 /** 20 Before and after. */
@@ -22,11 +22,10 @@ export default function CompareResult() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
   const { data, error, reload, setData } = useApi<C>(`/api/compare/${id}`, { pollMs: 2500, poll: (d) => d.status === "running" });
-  const [since] = useState(() => new Date().toISOString());
 
   if (error) return <ErrorState message={error.message} retry={reload} />;
   if (!data) return <Loading />;
-  if (data.status === "running") return <Reviewing since={since} onLeave={() => router.push("/videos")} />;
+  if (data.status === "running") return <Reviewing since={data.statusAt} title="Comparing your clips" leaveLabel="Back to my videos" onLeave={() => router.push("/videos")} />;
   if (data.status === "failed" || !data.result)
     return (
       <div className="screen">
@@ -62,7 +61,7 @@ export default function CompareResult() {
               <div style={{ fontSize: 12, fontWeight: 800, letterSpacing: ".08em", color: "var(--ink-600)" }}>{i ? "AFTER" : "BEFORE"}</div>
               <div className="thumb" style={{ width: "100%", height: 62, borderRadius: 12 }}>
                 <video src={`/api/videos/${v.id}/file#t=0.5`} preload="metadata" muted playsInline />
-                <span className="dur" style={{ left: 6, bottom: 6 }}>{fmt(v.durationSec)}</span>
+                {v.durationSec > 0 && <span className="dur" style={{ left: 6, bottom: 6 }}>{fmt(v.durationSec)}</span>}
               </div>
               <div className="row-title">{v.move}</div>
               <div className="small">

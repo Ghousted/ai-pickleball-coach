@@ -3,14 +3,15 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Icon } from "@/components/icons";
 import { useMe } from "@/components/shell";
-import { BadgeCoin, Loading } from "@/components/ui";
+import { BadgeCoin, ErrorState, Loading } from "@/components/ui";
 import { authClient } from "@/lib/auth-client";
 import { BADGES } from "@/lib/game";
 
 /** 24 You. */
 export default function You() {
   const router = useRouter();
-  const { me, reload } = useMe();
+  const { me, meError, reload } = useMe();
+  if (meError && !me) return <ErrorState message={meError} retry={reload} />;
   if (!me?.profile || !me.level) return <Loading />;
   const p = me.profile;
   const L = me.level;
@@ -93,8 +94,8 @@ export default function You() {
             <Icon n="flag" />
           </div>
           <div style={{ flex: 1 }}>
-            <div className="row-title">Flagged tips</div>
-            <div className="row-sub">{me.stats?.flagged ?? 0} left out of your quests</div>
+            <div className="row-title">Flagged</div>
+            <div className="row-sub">{me.stats?.flagged ?? 0} flagged tips left out of your quests</div>
           </div>
           <Icon n="chev" color="var(--navy)" />
         </Link>

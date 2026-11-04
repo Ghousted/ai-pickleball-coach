@@ -1,5 +1,5 @@
 "use client";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useRef, useState } from "react";
 import { Icon } from "@/components/icons";
 import { Avatar, ErrorState, Loading, TopBar } from "@/components/ui";
@@ -9,7 +9,6 @@ type Chat = { tag: string; chips: string[]; messages: { id: string; role: "coach
 
 /** 11 Coach chat. A thread is "general" or one video's review. */
 function CoachChat() {
-  const router = useRouter();
   const thread = useSearchParams().get("thread") || "general";
   const { data, error, reload, setData } = useApi<Chat>(`/api/chat?thread=${encodeURIComponent(thread)}`);
   const [draft, setDraft] = useState("");
@@ -29,10 +28,13 @@ function CoachChat() {
     setTyping(true);
     try {
       await api("/api/chat", { body: { thread, text } });
+      await reload();
     } catch (e) {
+      // Give the message back, so the player does not lose what they typed.
       notify((e as ApiError).message);
+      setData(data);
+      setDraft(text);
     }
-    await reload();
     setTyping(false);
   };
 
@@ -41,7 +43,7 @@ function CoachChat() {
 
   return (
     <div className="screen plain" style={{ overflow: "hidden" }}>
-      <TopBar title="Your coach" back={() => router.back()} right={<span className="pill pill-gold">{data.tag}</span>} />
+      <TopBar title="Your coach" back={{ fallback: "/quests" }} right={<span className="pill pill-gold">{data.tag}</span>} />
       <div ref={scroller} style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: "16px var(--gutter)", display: "flex", flexDirection: "column", gap: 14 }} aria-live="polite">
         {data.messages.map((m, i) =>
           m.role === "coach" ? (

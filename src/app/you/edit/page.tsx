@@ -3,12 +3,13 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { ProfileFieldsForm, type ProfileFields } from "@/components/profile-form";
 import { useMe } from "@/components/shell";
-import { Loading, TopBar } from "@/components/ui";
+import { ErrorState, Loading, TopBar } from "@/components/ui";
 import { api, ApiError } from "@/lib/client";
 
 /** 26 Edit profile, and delete account. */
 export default function EditProfile() {
-  const { me } = useMe();
+  const { me, meError, reload } = useMe();
+  if (meError && !me) return <ErrorState message={meError} retry={reload} />;
   if (!me?.profile) return <Loading />;
   const p = me.profile;
   return <EditForm initial={{ name: p.name, level: p.level, playDays: p.playDays, goal: p.goal ?? "" }} />;
@@ -50,7 +51,7 @@ function EditForm({ initial }: { initial: ProfileFields }) {
 
   return (
     <div className="screen">
-      <TopBar title="Edit profile" back={() => router.back()} />
+      <TopBar title="Edit profile" back={{ fallback: "/you" }} />
       <div className="pad g10">
         <ProfileFieldsForm f={f} set={setF} withName />
         {err && (
