@@ -16,6 +16,9 @@ export const MAX_SECONDS = 35;
 export const MAX_BYTES = 100 * 1024 * 1024;
 export const DRILLS_PER_QUEST = 10;
 
+/** Daily caps per player. They limit AI cost and stop XP farming by delete and re-upload. */
+export const DAILY = { clips: 10, grades: 10, compares: 10, chats: 60 } as const;
+
 const LV = [0, 100, 250, 400, 600, 850, 1200];
 const LN = ["Newcomer", "Rally Starter", "Dink Rookie", "Kitchen Regular", "Rally Pro", "Kitchen King", "Legend"];
 

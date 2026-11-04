@@ -34,8 +34,10 @@ async function createAuth() {
     baseURL: process.env.BETTER_AUTH_URL,
     database: drizzleAdapter(db, {
       provider: "pg",
-      schema: { user: schema.user, session: schema.session, account: schema.account, verification: schema.verification },
+      schema: { user: schema.user, session: schema.session, account: schema.account, verification: schema.verification, rateLimit: schema.rateLimit },
     }),
+    // Limits sign-in attempts. Stored in the database because each serverless instance has its own memory.
+    rateLimit: { enabled: true, storage: "database", window: 60, max: 100, customRules: { "/sign-in/email": { window: 60, max: 5 }, "/sign-up/email": { window: 60, max: 5 } } },
     emailAndPassword: { enabled: true, minPasswordLength: 8, autoSignIn: true },
     plugins: [nextCookies()],
   });

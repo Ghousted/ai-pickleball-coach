@@ -1,4 +1,5 @@
 import {
+  bigint,
   boolean,
   index,
   integer,
@@ -69,6 +70,14 @@ export const verification = pgTable("verification", {
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
 
+/** Better Auth stores sign-in rate limits here, so the limit holds across serverless instances. */
+export const rateLimit = pgTable("rate_limit", {
+  id: text("id").primaryKey(),
+  key: text("key").notNull().unique(),
+  count: integer("count").notNull(),
+  lastRequest: bigint("last_request", { mode: "number" }).notNull(),
+});
+
 /* ---------- AI Coach ---------- */
 
 /** One profile is one person in one sport. The design shows one profile per account. */
@@ -88,7 +97,8 @@ export const profiles = pgTable(
     hideWizard: boolean("hide_wizard").notNull().default(false),
     createdAt: createdAt(),
   },
-  (t) => [index("profiles_user_idx").on(t.userId)],
+  // One profile per account for now. The unique index stops a double tap creating two.
+  (t) => [uniqueIndex("profiles_user_idx").on(t.userId)],
 );
 
 export type VideoStatus = "uploading" | "uploaded" | "reviewing" | "reviewed" | "failed" | "unusable";

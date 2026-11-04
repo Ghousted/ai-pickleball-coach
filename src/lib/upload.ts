@@ -46,8 +46,8 @@ export async function uploadClip(
       move: meta.move,
       contentType: file.type || "video/mp4",
       sizeBytes: file.size,
-      // Some browsers cannot read the length of every format. The server still caps it.
-      durationSec: picked.durationSec ?? 30,
+      // null when this browser cannot read the length of the format (some iPhone clips in Chrome).
+      durationSec: picked.durationSec,
       kind: meta.kind ?? "clip",
       drillId: meta.drillId,
       resumeId: meta.resumeId,

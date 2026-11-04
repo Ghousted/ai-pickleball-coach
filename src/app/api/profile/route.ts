@@ -24,7 +24,9 @@ export const POST = route(async (req: Request) => {
   const [p] = await db
     .insert(profiles)
     .values({ userId: session.user.id, name: body.name, level: body.level, playDays: body.playDays, goal: body.goal || null, sport: "pickleball" })
+    .onConflictDoNothing()
     .returning();
+  if (!p) throw new HttpError(409, "You already have a profile.");
   const notes: Notes = [];
   await gainXp(db, p.id, XP.join, "Joined AI Coach", "join");
   if (body.goal) await award(db, p.id, "goal");

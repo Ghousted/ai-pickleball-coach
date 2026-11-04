@@ -1,8 +1,8 @@
 import "server-only";
-import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, ne, sql } from "drizzle-orm";
 import type { DB } from "./db";
 import { schema } from "./db";
-import { BADGES, DAYS, DRILLS_PER_QUEST, fmt, levelFor, dayName } from "./game";
+import { BADGES, DAYS, DRILLS_PER_QUEST, fmt, levelFor, dayName, XP } from "./game";
 import { questByKey, questForCues, QUESTS } from "./knowledge/pickleball";
 import { coachAgent, compareAgent, gradeAgent, reviewAgent, toSec } from "./ai/agents";
 import { readAll, remove } from "./storage";
@@ -71,6 +71,13 @@ export async function checkStreak(db: DB, profileId: string, notes?: Notes) {
   if ((await streak(db, profileId)) >= 3) await award(db, profileId, "streak", notes);
 }
 
+/** Start of today (server time). Used for the daily caps. */
+export const startOfToday = () => {
+  const d = new Date();
+  d.setHours(0, 0, 0, 0);
+  return d;
+};
+
 /* ---------------- Videos ---------------- */
 
 export async function deleteVideos(db: DB, rows: { id: string; blobPath: string | null }[]) {
@@ -105,16 +112,17 @@ export async function runReviewJob(db: DB, videoId: string) {
   }
 }
 
+/** Runs a side task (streak badge, drill refresh) so its failure cannot undo a finished review. */
+const quietly = (label: string, p: Promise<unknown>) => p.catch((e) => console.error(label, e));
+
+/**
+ * Saves the result first, then moves the video from "reviewing" to done in one conditional update.
+ * Only that update grants XP, so a retry or a deleted video never pays twice.
+ */
 async function reviewJob(db: DB, v: typeof videos.$inferSelect, p: Profile, video: () => Promise<{ data: Buffer; mime: string }>) {
   const out = await reviewAgent({ video, sport: p.sport, move: v.move, level: p.level, durationSec: v.durationSec });
   const usable = out.usable && out.tips.length > 0;
-  const notes: Notes = [];
-  let reward = null;
-  if (usable) {
-    const r = await gainXp(db, p.id, 50, `Review ready: ${v.move}`, "review", notes);
-    const badge = await award(db, p.id, "review");
-    reward = { xp: 50, badge, levelUp: r.levelUp };
-  }
+  await db.delete(reviews).where(eq(reviews.videoId, v.id)); // clears a partial result from an earlier attempt
   const [rev] = await db
     .insert(reviews)
     .values({
@@ -123,31 +131,63 @@ async function reviewJob(db: DB, v: typeof videos.$inferSelect, p: Profile, vide
       unusableReason: usable ? null : out.unusable_reason || (out.usable ? "Your coach could not tell what happened in this clip, so there are no tips. Try another clip." : "We could not see the move clearly."),
       subject: out.subject,
       observations: out.observations,
-      reward,
     })
     .returning();
   if (usable) {
     await db.insert(tips).values(
-      out.tips.map((t, i) => ({ reviewId: rev.id, videoId: v.id, position: i, timeSec: Math.min(v.durationSec, toSec(t.time)), title: t.title, saw: t.saw, try: t.try, cue: t.cue })),
+      out.tips.map((t, i) => ({ reviewId: rev.id, videoId: v.id, position: i, timeSec: toSec(t.time), title: t.title, saw: t.saw, try: t.try, cue: t.cue })),
     );
   }
-  await db.update(videos).set({ status: usable ? "reviewed" : "unusable", statusAt: new Date(), error: null }).where(eq(videos.id, v.id));
-  await checkStreak(db, p.id);
-  if (usable) await refreshProgram(db, p).catch((e) => console.error("program refresh failed", e));
+  const [done] = await db
+    .update(videos)
+    .set({ status: usable ? "reviewed" : "unusable", statusAt: new Date(), error: null })
+    .where(and(eq(videos.id, v.id), eq(videos.status, "reviewing")))
+    .returning({ id: videos.id });
+  if (!done) return; // deleted or already finished
+  if (usable) {
+    const r = await gainXp(db, p.id, XP.review, `Review ready: ${v.move}`, "review");
+    const badge = await award(db, p.id, "review");
+    await db.update(reviews).set({ reward: { xp: XP.review, badge, levelUp: r.levelUp } }).where(eq(reviews.id, rev.id));
+    await quietly("program refresh failed", refreshProgram(db, p));
+  }
+  await quietly("streak check failed", checkStreak(db, p.id));
 }
 
+/**
+ * A drill clip filmed for a grade. A clip that does not show the drill gets no grade, no XP and
+ * does not complete the drill. Only the first grade of a drill gives grade XP.
+ */
 async function gradeJob(db: DB, v: typeof videos.$inferSelect, p: Profile, video: () => Promise<{ data: Buffer; mime: string }>) {
   const [dr] = v.drillId ? await db.select().from(drills).where(eq(drills.id, v.drillId)) : [];
   if (!dr) throw new Error("Drill not found");
   const out = await gradeAgent({ video, sport: p.sport, drill: dr, level: p.level });
-  let xp = 30;
-  await gainXp(db, p.id, 30, `Drill graded: ${dr.title} (${out.grade})`, "review");
-  if (!dr.done) {
-    xp += 20;
-    await completeDrill(db, p, dr);
+  await db.delete(grades).where(eq(grades.videoId, v.id));
+  await db.delete(reviews).where(eq(reviews.videoId, v.id));
+
+  if (out.score === 0) {
+    await db.insert(reviews).values({ videoId: v.id, usable: false, unusableReason: out.good || "We could not see the drill in this clip.", observations: [] });
+    await db.update(videos).set({ status: "unusable", statusAt: new Date(), error: null }).where(and(eq(videos.id, v.id), eq(videos.status, "reviewing")));
+    return;
   }
+
+  const earlier = await db.select({ videoId: grades.videoId }).from(grades).where(eq(grades.drillId, dr.id));
+  const gradeXp = earlier.length ? 0 : XP.grade;
+  const xp = gradeXp + (dr.done ? 0 : XP.drill);
   await db.insert(grades).values({ drillId: dr.id, videoId: v.id, grade: out.grade, score: out.score, metrics: out.metrics, good: out.good, next: out.next, cue: dr.cue, xp });
-  await db.update(videos).set({ status: "reviewed", statusAt: new Date(), error: null }).where(eq(videos.id, v.id));
+  const [done] = await db
+    .update(videos)
+    .set({ status: "reviewed", statusAt: new Date(), error: null })
+    .where(and(eq(videos.id, v.id), eq(videos.status, "reviewing")))
+    .returning({ id: videos.id });
+  if (!done) return;
+  if (gradeXp) await gainXp(db, p.id, gradeXp, `Drill graded: ${dr.title} (${out.grade})`, "review");
+  if (!dr.done) await completeDrill(db, p, dr);
+
+  // Keep only the newest grade clip of a drill, so old drill clips do not fill the storage.
+  if (earlier.length) {
+    const old = await db.select({ id: videos.id, blobPath: videos.blobPath }).from(videos).where(inArray(videos.id, earlier.map((g) => g.videoId)));
+    await quietly("old grade clip cleanup failed", deleteVideos(db, old));
+  }
 }
 
 /* ---------------- Programs (quests) and drills ---------------- */
@@ -197,7 +237,6 @@ export async function startQuest(db: DB, p: Profile, questKey: string, notes?: N
     .orderBy(desc(programs.createdAt))
     .limit(1);
   const doneBefore = old ? (await db.select().from(drills).where(and(eq(drills.programId, old.id), eq(drills.done, true)))).length : 0;
-  await db.update(programs).set({ status: "archived" }).where(and(eq(programs.profileId, p.id), eq(programs.status, "current")));
 
   const goal = p.goal?.trim() || quest.name;
   if (!p.goal?.trim()) {
@@ -210,6 +249,8 @@ export async function startQuest(db: DB, p: Profile, questKey: string, notes?: N
   await db.insert(drills).values(
     list.slice(0, DRILLS_PER_QUEST).map((d, i) => ({ programId: prog.id, position: i, tipId: d.tipId, title: d.title, how: d.how, minutes: d.minutes, cue: d.cue, day: days[i], done: i < doneBefore })),
   );
+  // Archive the old program only now, so a failure above never leaves the player with no quest.
+  await db.update(programs).set({ status: "archived" }).where(and(eq(programs.profileId, p.id), eq(programs.status, "current"), ne(programs.id, prog.id)));
   return currentProgram(db, p.id);
 }
 
@@ -284,11 +325,10 @@ export async function runCompareJob(db: DB, compId: string) {
     const before = await load(c.videoA);
     const after = await load(c.videoB);
     const out = await compareAgent({ sport: p.sport, move: after.v.move, before, after });
-    await db.update(comparisons).set({ status: "done", result: out, statusAt: new Date() }).where(eq(comparisons.id, compId));
-    await refreshProgram(db, p).catch(() => {});
+    await db.update(comparisons).set({ status: "done", result: out, statusAt: new Date() }).where(and(eq(comparisons.id, compId), eq(comparisons.status, "running")));
   } catch (err) {
     console.error("compare job failed", err);
-    await db.update(comparisons).set({ status: "failed", statusAt: new Date() }).where(eq(comparisons.id, compId));
+    await db.update(comparisons).set({ status: "failed", statusAt: new Date() }).where(and(eq(comparisons.id, compId), eq(comparisons.status, "running")));
   }
 }
 

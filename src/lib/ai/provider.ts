@@ -64,15 +64,19 @@ async function gemini(prompt: string, videos: VideoInput[], jsonSchema: unknown,
   const signal = AbortSignal.timeout(AI_TIMEOUT_MS);
   const fps = process.env.GEMINI_FPS ? Number(process.env.GEMINI_FPS) : undefined;
   const uploaded: string[] = [];
+  // Gemini takes about 20 MB per request, and base64 makes a clip about 4/3 larger.
+  // So the clips go inline only when all of them together are under 14 MB.
+  const total = videos.reduce((n, v) => n + v.data.byteLength, 0);
+  const inline = total < 14 * 1024 * 1024;
   try {
     const parts: object[] = [];
     for (const v of videos) {
-      // Small clips go inline. Larger clips go through the Files API.
-      if (v.data.byteLength < 18 * 1024 * 1024) {
-        parts.push({ inlineData: { data: v.data.toString("base64"), mimeType: v.mime }, ...(fps ? { videoMetadata: { fps } } : {}) });
+      const mime = geminiMime(v.mime);
+      if (inline) {
+        parts.push({ inlineData: { data: v.data.toString("base64"), mimeType: mime }, ...(fps ? { videoMetadata: { fps } } : {}) });
         continue;
       }
-      let file = await ai.files.upload({ file: new Blob([new Uint8Array(v.data)], { type: v.mime }), config: { mimeType: v.mime, abortSignal: signal } });
+      let file = await ai.files.upload({ file: new Blob([v.data as Uint8Array<ArrayBuffer>], { type: mime }), config: { mimeType: mime, abortSignal: signal } });
       if (file.name) uploaded.push(file.name);
       while (file.state === "PROCESSING") {
         if (signal.aborted) throw new Error("AI timed out");
@@ -80,7 +84,7 @@ async function gemini(prompt: string, videos: VideoInput[], jsonSchema: unknown,
         file = await ai.files.get({ name: file.name! });
       }
       if (file.state === "FAILED" || !file.uri) throw new Error("Gemini could not process the clip");
-      parts.push({ ...createPartFromUri(file.uri, v.mime), ...(fps ? { videoMetadata: { fps } } : {}) });
+      parts.push({ ...createPartFromUri(file.uri, mime), ...(fps ? { videoMetadata: { fps } } : {}) });
     }
     parts.push({ text: prompt });
     const res = await ai.models.generateContent({
@@ -96,8 +100,16 @@ async function gemini(prompt: string, videos: VideoInput[], jsonSchema: unknown,
     if (!text) throw new Error("Gemini returned nothing");
     return text;
   } finally {
-    for (const name of uploaded) ai.files.delete({ name }).catch(() => {});
+    // Awaited, so the files are gone before the background job ends.
+    await Promise.all(uploaded.map((name) => ai.files.delete({ name }).catch(() => {})));
   }
+}
+
+/** Gemini lists iPhone clips as video/mov, not video/quicktime. */
+function geminiMime(mime: string) {
+  if (mime === "video/quicktime") return "video/mov";
+  if (mime === "video/x-m4v") return "video/mp4";
+  return mime || "video/mp4";
 }
 
 /* ---------------- OpenRouter ---------------- */
