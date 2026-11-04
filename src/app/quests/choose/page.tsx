@@ -1,5 +1,4 @@
 "use client";
-import { useRouter } from "next/navigation";
 import { Icon } from "@/components/icons";
 import { CoachSays, ErrorState, Loading, TopBar } from "@/components/ui";
 import { useApi } from "@/lib/client";
@@ -8,7 +7,6 @@ import { chooseMessage, useStartQuest } from "@/components/quests";
 
 /** 12 Choose your quest: the Coach's 3 suggested goals, one marked "For you". */
 export default function ChooseQuest() {
-  const router = useRouter();
   const { data, error, reload } = useApi<QuestsData>("/api/quests");
   const { start, busy } = useStartQuest();
   if (error) return <ErrorState message={error.message} retry={reload} />;
@@ -16,7 +14,7 @@ export default function ChooseQuest() {
 
   return (
     <div className="screen">
-      <TopBar title="Choose your quest" back={() => router.back()} />
+      <TopBar title="Choose your quest" back={{ fallback: "/quests" }} />
       <div className="pad">
         <CoachSays>{chooseMessage(data)}</CoachSays>
         {data.quests.map((q) => {

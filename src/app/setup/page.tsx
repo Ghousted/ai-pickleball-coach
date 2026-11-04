@@ -59,7 +59,7 @@ export default function Setup() {
           Hi {fv.name || "there"}! Tell me how you play and we&apos;ll start leveling you up.
         </div>
       </div>
-      <div className="col" style={{ background: "#fff", borderRadius: "28px 28px 0 0", marginTop: -28, position: "relative", padding: "24px 20px 20px", display: "flex", flexDirection: "column", gap: 10, flex: 1 }}>
+      <form onSubmit={(e) => { e.preventDefault(); if (ready && !busy) go(); }} className="col" style={{ background: "#fff", borderRadius: "28px 28px 0 0", marginTop: -28, position: "relative", padding: "24px 20px 20px", display: "flex", flexDirection: "column", gap: 10, flex: 1 }}>
         <ProfileFieldsForm f={fv} set={setFv} withName={!me?.user?.name} />
         {err && (
           <div className="error-box" role="alert">
@@ -67,10 +67,10 @@ export default function Setup() {
           </div>
         )}
         <div className="grow" />
-        <button className="btn btn-primary btn-lg" disabled={!ready || busy} onClick={go}>
+        <button type="submit" className="btn btn-primary btn-lg" disabled={!ready || busy}>
           {busy ? "Saving…" : "Game on"}
         </button>
-      </div>
+      </form>
     </div>
   );
 }

@@ -28,7 +28,7 @@ export const GET = route(async (_req: Request, { params }: Ctx) => {
   const done = (await db.select({ id: drills.id }).from(drills).where(and(eq(drills.programId, p.id), eq(drills.done, true)))).length;
   const [next] = await db.select().from(drills).where(and(eq(drills.programId, p.id), eq(drills.done, false))).orderBy(drills.position).limit(1);
   return json({
-    drill: { id: d.id, position: d.position, title: d.title, how: d.how, minutes: d.minutes, cue: d.cue, day: d.day, done: d.done },
+    drill: { id: d.id, position: d.position, title: d.title, how: d.how, minutes: d.minutes, cue: d.cue, day: d.day, done: d.done, flagged: d.flagged },
     quest: { name: p.name, badge: p.badge, done, current: p.status === "current" },
     fixes: tip ? { title: tip.title, time: fmt(tip.timeSec), videoId: tip.videoId, flagged: tip.flagged } : null,
     grade: grade ? { grade: grade.grade, score: grade.score, metrics: grade.metrics, good: grade.good, next: grade.next, cue: grade.cue, xp: grade.xp } : null,
@@ -36,11 +36,15 @@ export const GET = route(async (_req: Request, { params }: Ctx) => {
   });
 });
 
-/** "I did this drill". */
+/** "I did this drill", or "This looks wrong" on a drill. */
 export const PATCH = route(async (req: Request, { params }: Ctx) => {
   const { id } = await params;
-  z.object({ done: z.literal(true) }).parse(await req.json());
+  const body = z.union([z.object({ done: z.literal(true) }), z.object({ flagged: z.boolean() })]).parse(await req.json());
   const { profile, db, d, p } = await own(id);
+  if ("flagged" in body) {
+    await db.update(drills).set({ flagged: body.flagged }).where(eq(drills.id, d.id));
+    return json({ ok: true, notes: [body.flagged ? "Flagged. Thanks for telling us." : "Flag removed"] });
+  }
   if (p.status !== "current") throw new HttpError(409, "This quest is no longer active. Open your current quest.");
   const notes: Notes = [];
   const r = await completeDrill(db, profile, d, notes);

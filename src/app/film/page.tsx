@@ -3,6 +3,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { Icon } from "@/components/icons";
 import { TopBar } from "@/components/ui";
+import { goBack } from "@/lib/client";
 import { FILM_STEPS, fmt } from "@/lib/game";
 
 /** 05 How to film: the pre-game checklist. Reachable from Videos and Upload. */
@@ -37,7 +38,7 @@ export default function HowToFilm() {
 
   return (
     <div className="screen">
-      <TopBar title="Pre-game checklist" back={() => router.back()} />
+      <TopBar title="Pre-game checklist" back={{ fallback: "/videos" }} />
       <div className="pad g10">
         <div style={{ background: "linear-gradient(160deg,#0b3040,#042330)", borderRadius: 22, padding: "16px 14px", color: "#fff", display: "flex", flexDirection: "column", alignItems: "center", gap: 10 }}>
           <span className="pill pill-green sm">Step {step + 1} of 5</span>
@@ -78,7 +79,7 @@ export default function HowToFilm() {
             </div>
           </button>
         ))}
-        <button className="btn btn-primary" style={{ marginTop: 4 }} onClick={() => (new URLSearchParams(location.search).get("from") === "upload" ? router.back() : router.push("/videos/upload"))}>
+        <button className="btn btn-primary" style={{ marginTop: 4 }} onClick={() => (new URLSearchParams(location.search).get("from") === "upload" ? goBack(router, "/videos/upload") : router.push("/videos/upload"))}>
           Got it, upload
         </button>
       </div>

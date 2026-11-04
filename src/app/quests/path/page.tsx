@@ -109,10 +109,12 @@ export default function QuestPath() {
                   fontSize: 14,
                   color: locked ? "#93a4ab" : "#fff",
                   textAlign: right ? "right" : "left",
-                  whiteSpace: "nowrap",
+                  // AI-written titles can be long: wrap to two lines inside the path box.
+                  maxWidth: (right ? x - big - 10 : W - x - big - 10) - 4,
+                  lineHeight: 1.2,
                 }}
               >
-                {label}
+                <div style={{ display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>{label}</div>
                 {d && !d.done && <div style={{ fontSize: 11, fontWeight: 700, color: "rgba(255,255,255,.55)" }}>{d.day}</div>}
               </div>
             </div>
@@ -124,7 +126,7 @@ export default function QuestPath() {
         {next ? (
           <div className="col" style={{ background: "#fff", border: "3px solid var(--green)", borderRadius: 20, padding: "10px 10px 10px 14px", color: "var(--ink)", display: "flex", alignItems: "center", gap: 12, boxShadow: "0 8px 24px rgba(0,0,0,.3)" }}>
             <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: 3 }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: 800, color: "var(--green-700)", whiteSpace: "nowrap" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: 800, color: "var(--green-700)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
                 <span>
                   Up next · drill {next.position + 1} · {next.day}
                 </span>

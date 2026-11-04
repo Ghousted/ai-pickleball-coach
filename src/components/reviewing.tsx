@@ -5,7 +5,7 @@ import { Icon, Logo } from "./icons";
 import { useMe } from "./shell";
 
 /** 08 Reviewing: the wait. Progress is an estimate; the page polls the real status. */
-export function Reviewing({ since, grade, onLeave }: { since: string; grade?: boolean; onLeave: () => void }) {
+export function Reviewing({ since, grade, title, leaveLabel, onLeave }: { since: string; grade?: boolean; title?: string; leaveLabel?: string; onLeave: () => void }) {
   const { me } = useMe();
   const expected = me?.ai === "mock" ? 6 : 75;
   const [now, setNow] = useState(() => Date.now());
@@ -38,14 +38,14 @@ export function Reviewing({ since, grade, onLeave }: { since: string; grade?: bo
             <Logo size={44} />
           </div>
         </div>
-        <div style={{ fontSize: 26, fontWeight: 800, letterSpacing: "-.02em", marginTop: 8 }}>{grade ? "Grading your drill" : "Reviewing your video"}</div>
+        <div style={{ fontSize: 26, fontWeight: 800, letterSpacing: "-.02em", marginTop: 8 }}>{title ?? (grade ? "Grading your drill" : "Reviewing your video")}</div>
         <div style={{ fontSize: 15, color: "rgba(255,255,255,.7)" }}>{slow ? "This is taking longer than usual." : msg}</div>
         <Bar pct={pct} tone="dark" h={12} style={{ width: "100%", maxWidth: 280, marginTop: 8 }} />
         <div style={{ fontSize: 13, color: "rgba(255,255,255,.7)" }}>
           {slow ? "You can leave and come back. We'll keep working on it." : "You can leave this screen. We'll tell you when it's ready."}
         </div>
         <button className="btn btn-dark btn-md" style={{ marginTop: 4 }} onClick={onLeave}>
-          {grade ? "Back to quest" : "Back to my videos"}
+          {leaveLabel ?? (grade ? "Back to quest" : "Back to my videos")}
         </button>
       </div>
     </div>
@@ -59,6 +59,7 @@ export function Reward(props: {
   title: string;
   badge?: string | null;
   badgeIcon?: string;
+  levelUp?: string | null;
   quest?: { name: string; n: number } | null;
   cta: string;
   onNext: () => void;
@@ -75,6 +76,12 @@ export function Reward(props: {
         </span>
         <div style={{ background: "var(--orange)", color: "var(--navy)", fontFamily: "var(--font-display)", fontSize: 28, padding: "6px 24px", borderRadius: 999, animation: "aiPop .5s ease-out both" }}>+{props.xp} XP</div>
         <div style={{ fontSize: 28, fontWeight: 800, letterSpacing: "-.02em" }}>{props.title}</div>
+        {props.levelUp && (
+          <span className="pill pill-gold" style={{ fontSize: 14, animation: "aiPop .5s .2s ease-out both" }}>
+            <Icon n="star" size={16} />
+            Level up! You&apos;re a {props.levelUp}
+          </span>
+        )}
         {props.quest && (
           <div style={{ alignSelf: "stretch", display: "flex", flexDirection: "column", gap: 6 }}>
             <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, fontWeight: 700 }}>
