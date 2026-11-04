@@ -40,7 +40,8 @@ export const GET = route(async (_req: Request, { params }: Ctx) => {
 export const PATCH = route(async (req: Request, { params }: Ctx) => {
   const { id } = await params;
   z.object({ done: z.literal(true) }).parse(await req.json());
-  const { profile, db, d } = await own(id);
+  const { profile, db, d, p } = await own(id);
+  if (p.status !== "current") throw new HttpError(409, "This quest is no longer active. Open your current quest.");
   const notes: Notes = [];
   const r = await completeDrill(db, profile, d, notes);
   const [next] = await db.select().from(drills).where(and(eq(drills.programId, d.programId), eq(drills.done, false))).orderBy(drills.position).limit(1);

@@ -19,10 +19,14 @@ async function knowledge(sport: string) {
   return knowledgeCache.get(sport)!;
 }
 
-const mmss = z.string().regex(/^\d{1,2}:\d{2}$/, "time must be m:ss");
+/** A time the AI wrote. Kept loose here; `toSec` reads it and bad values are dropped, not fatal. */
+const mmss = z.string().describe("time in the clip as m:ss, for example 0:07");
+
+/** Reads "0:07", "00:00:07", "7", "0:07.5" or "7s". Returns NaN when it cannot. */
 export const toSec = (t: string) => {
-  const [m, s] = t.split(":").map(Number);
-  return m * 60 + s;
+  const clean = String(t).trim().replace(/s$/i, "");
+  if (!/^\d+(:\d{1,2}){0,2}(\.\d+)?$/.test(clean)) return NaN;
+  return clean.split(":").reduce((acc, part) => acc * 60 + Number(part), 0);
 };
 
 /* ---------------- Review agent ---------------- */
@@ -41,8 +45,7 @@ const ReviewSchema = z.object({
         try: z.string().describe("one thing to try, lower case, imperative"),
         cue: z.enum(CUES),
       }),
-    )
-    .max(5),
+    ),
 });
 export type ReviewOut = z.infer<typeof ReviewSchema>;
 
@@ -55,7 +58,7 @@ export async function reviewAgent(input: {
 }): Promise<ReviewOut> {
   if (provider() === "mock") return mockReview(input.move, input.durationSec);
   const prompt = `You are a ${input.sport} coach reviewing a phone video of one player doing a "${input.move}".
-Player level: ${input.level}. The clip is ${fmt(input.durationSec)} long.
+Player level: ${input.level}.${input.durationSec > 0 ? ` The clip is ${fmt(input.durationSec)} long.` : ""}
 
 KNOWLEDGE FILE (judge the clip against this):
 ${await knowledge(input.sport)}
@@ -67,10 +70,11 @@ STEPS
 4. Then give 3 to 5 tips. Each tip has the time of the moment, what you saw, one thing to try, and one cue from the knowledge file. Only give a tip for something you can actually see. If you are not sure what happened, give fewer tips, or none. A missing tip is better than a wrong one.
 5. No medical or injury advice.`;
   const out = await generateJson({ prompt, schema: ReviewSchema, videos: [await input.video()] });
-  out.tips = out.tips.filter((t) => toSec(t.time) <= input.durationSec + 1);
-  if (out.usable && out.tips.length > 0 && out.tips.length < 3 && out.observations.length === 0) {
-    throw new Error("Review had tips without observations");
-  }
+  // Drop a tip with an unreadable time, or a time past the end of the clip, instead of failing the review.
+  const limit = input.durationSec > 0 ? input.durationSec + 1 : Infinity;
+  const ok = (t: string) => Number.isFinite(toSec(t)) && toSec(t) >= 0 && toSec(t) <= limit;
+  out.tips = out.tips.filter((t) => ok(t.time)).slice(0, 5);
+  out.observations = out.observations.filter((o) => ok(o.time));
   return out;
 }
 
@@ -97,6 +101,7 @@ const MOCK_TIPS = {
 
 let mockFlip = 0;
 async function mockReview(move: string, dur: number): Promise<ReviewOut> {
+  dur = dur > 0 ? dur : 20;
   await new Promise((r) => setTimeout(r, 4000));
   const outcome = process.env.MOCK_OUTCOME;
   if (outcome === "fails") throw new Error("Mock failure (MOCK_OUTCOME=fails)");
@@ -158,7 +163,11 @@ ${await knowledge(input.sport)}
 Watch the reps, then grade them. Give a letter grade and a score out of 100, and exactly 3 metrics in this order:
 "Consistency", "Technique · ${input.drill.cue}", "Footwork" (0 to 100 each). Say what is working and one thing for the next rep.
 Speak to the player as "you". No medical advice. If you cannot see the drill, give grade "D", score 0, and say why in "good".`;
-  return generateJson({ prompt, schema: GradeSchema, videos: [await input.video()] });
+  const out = await generateJson({ prompt, schema: GradeSchema, videos: [await input.video()] });
+  // The labels come from code: the model can garble them (it once returned "Technique \b7 ...").
+  const labels = ["Consistency", `Technique · ${input.drill.cue}`, "Footwork"];
+  out.metrics = labels.map((label, i) => ({ label, value: out.metrics[i]?.value ?? out.score }));
+  return out;
 }
 
 /* ---------------- Compare agent ---------------- */
@@ -255,6 +264,7 @@ Tailor each template to this player: keep the title or adjust it slightly, rewri
   try {
     const out = await generateJson({ prompt, schema: ProgramSchema, text: true });
     const ids = new Set(input.tips.map((t) => t.id));
+    if (new Set(out.drills.map((d) => d.template)).size !== 10) throw new Error("Coach repeated a drill template");
     return out.drills
       .sort((a, b) => a.template - b.template)
       .map((d) => ({ title: d.title, how: d.how, minutes: d.minutes, cue: d.cue, tipId: d.tip_id && ids.has(d.tip_id) ? d.tip_id : null }));

@@ -21,7 +21,7 @@ export const GET = route(async (_req: Request, { params }: Ctx) => {
   const { db, c: raw } = await own(id);
   let c = raw;
   if (c.status === "running" && Date.now() - c.statusAt.getTime() > STALL_MS) {
-    await db.update(comparisons).set({ status: "failed" }).where(eq(comparisons.id, c.id));
+    await db.update(comparisons).set({ status: "failed" }).where(and(eq(comparisons.id, c.id), eq(comparisons.status, "running")));
     c = { ...c, status: "failed" };
   }
   const pair = await Promise.all(
@@ -31,7 +31,7 @@ export const GET = route(async (_req: Request, { params }: Ctx) => {
       return { id: v.id, move: v.move, durationSec: v.durationSec, createdAt: v.createdAt, tipCount: ts.length };
     }),
   );
-  return json({ id: c.id, status: c.status, result: c.result, xp: c.xpAwarded, flagged: c.flagged, pair });
+  return json({ id: c.id, status: c.status, result: c.result, xp: c.xpAwarded, flagged: c.flagged, pair, statusAt: c.statusAt });
 });
 
 /** "This looks wrong" on a comparison. */
@@ -47,9 +47,13 @@ export const PATCH = route(async (req: Request, { params }: Ctx) => {
 export const POST = route(async (_req: Request, { params }: Ctx) => {
   const { id } = await params;
   const { db, c } = await own(id);
-  if (c.status !== "failed") return json({ ok: true });
-  await db.update(comparisons).set({ status: "running", statusAt: new Date() }).where(eq(comparisons.id, c.id));
-  after(() => runCompareJob(db, c.id));
+  // Only one request can move it from "failed" to "running", so a double press starts one job.
+  const [started] = await db
+    .update(comparisons)
+    .set({ status: "running", statusAt: new Date() })
+    .where(and(eq(comparisons.id, c.id), eq(comparisons.status, "failed")))
+    .returning({ id: comparisons.id });
+  if (started) after(() => runCompareJob(db, c.id));
   return json({ ok: true });
 });
 

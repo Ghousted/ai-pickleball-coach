@@ -24,7 +24,8 @@ export const POST = route(async (req: Request) => {
         allowedContentTypes: ["video/*"],
         maximumSizeInBytes: MAX_BYTES, // the server-side size cap (PRD 7.5)
         addRandomSuffix: false,
-        allowOverwrite: true,
+        allowOverwrite: true, // a retry of the same upload writes the same path
+        validUntil: Date.now() + 30 * 60 * 1000, // the permission ends after 30 minutes
       };
     },
   });

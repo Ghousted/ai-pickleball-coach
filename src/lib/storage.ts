@@ -71,6 +71,21 @@ export async function exists(key: string): Promise<boolean> {
   }
 }
 
+/** Deletes every clip of a profile, including files no row points to (a late or abandoned upload). */
+export async function removeProfileFiles(profileId: string) {
+  if (storageMode() === "local") {
+    await fsp.rm(localPath(`videos/${profileId}`), { recursive: true, force: true });
+    return;
+  }
+  const { list, del } = await import("@vercel/blob");
+  let cursor: string | undefined;
+  do {
+    const page = await list({ prefix: `videos/${profileId}/`, cursor, limit: 1000 });
+    if (page.blobs.length) await del(page.blobs.map((b) => b.url));
+    cursor = page.hasMore ? page.cursor : undefined;
+  } while (cursor);
+}
+
 export async function remove(keys: (string | null | undefined)[]) {
   const list = keys.filter((k): k is string => !!k);
   if (!list.length) return;
@@ -86,7 +101,14 @@ export async function remove(keys: (string | null | undefined)[]) {
 export async function serve(key: string, contentType: string, range: string | null): Promise<Response> {
   if (storageMode() === "blob") {
     const { get } = await import("@vercel/blob");
-    const res = await get(key, { access: "private", headers: range ? { range } : undefined });
+    let res: Awaited<ReturnType<typeof get>>;
+    try {
+      res = await get(key, { access: "private", headers: range ? { range } : undefined });
+    } catch (err) {
+      // The Blob SDK throws on a range past the end of the file. Answer that the way a browser expects.
+      if (range) return new Response(null, { status: 416 });
+      throw err;
+    }
     if (!res || res.statusCode !== 200) return new Response("Not found", { status: 404 });
     const h = new Headers();
     for (const k of ["content-type", "content-length", "content-range", "accept-ranges", "etag"]) {

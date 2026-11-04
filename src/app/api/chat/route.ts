@@ -1,11 +1,11 @@
-import { and, asc, desc, eq } from "drizzle-orm";
+import { and, asc, desc, eq, gte, sql } from "drizzle-orm";
 import { z } from "zod";
-import { requireProfile } from "@/lib/auth";
+import { HttpError, requireProfile } from "@/lib/auth";
 import { schema } from "@/lib/db";
-import { fmt } from "@/lib/game";
+import { DAILY, fmt } from "@/lib/game";
 import { json, route } from "@/lib/http";
 import { chatAgent } from "@/lib/ai/agents";
-import { award, currentProgram, type Notes } from "@/lib/services";
+import { award, currentProgram, startOfToday, type Notes } from "@/lib/services";
 
 const { chatMessages, videos, tips } = schema;
 type DBx = Awaited<ReturnType<typeof requireProfile>>["db"];
@@ -19,10 +19,20 @@ async function context(db: DBx, profileId: string, thread: string) {
   return { v, tips: ts.map((t) => ({ time: fmt(t.timeSec), saw: t.saw, try: t.try, cue: t.cue })) };
 }
 
+const Thread = z.union([z.literal("general"), z.string().uuid()], { message: "Chat not found." });
+
+/** A video thread must be one of the player's own videos. */
+async function checkThread(db: DBx, profileId: string, thread: string) {
+  if (thread === "general") return;
+  const [v] = await db.select({ id: videos.id }).from(videos).where(and(eq(videos.id, thread), eq(videos.profileId, profileId)));
+  if (!v) throw new HttpError(404, "Chat not found.");
+}
+
 /** A thread is "general" or a video id. The first message is a greeting from the coach. */
 export const GET = route(async (req: Request) => {
-  const thread = new URL(req.url).searchParams.get("thread") || "general";
+  const thread = Thread.parse(new URL(req.url).searchParams.get("thread") || "general");
   const { profile, db } = await requireProfile();
+  await checkThread(db, profile.id, thread);
   let msgs = await db.select().from(chatMessages).where(and(eq(chatMessages.profileId, profile.id), eq(chatMessages.thread, thread))).orderBy(asc(chatMessages.createdAt));
   const ctx = await context(db, profile.id, thread);
   if (!msgs.length) {
@@ -42,14 +52,23 @@ export const GET = route(async (req: Request) => {
 });
 
 export const POST = route(async (req: Request) => {
-  const { thread, text } = z.object({ thread: z.string().min(1), text: z.string().trim().min(1).max(500) }).parse(await req.json());
+  const { thread, text } = z.object({ thread: Thread, text: z.string().trim().min(1).max(500) }).parse(await req.json());
   const { profile, db } = await requireProfile();
+  await checkThread(db, profile.id, thread);
+  const [today] = await db
+    .select({ n: sql<number>`count(*)::int` })
+    .from(chatMessages)
+    .where(and(eq(chatMessages.profileId, profile.id), eq(chatMessages.role, "me"), gte(chatMessages.createdAt, startOfToday())));
+  if (today.n >= DAILY.chats) throw new HttpError(429, `You've sent ${DAILY.chats} messages today. Your coach will be back tomorrow.`);
   const notes: Notes = [];
   await db.insert(chatMessages).values({ profileId: profile.id, thread, role: "me", text });
   await award(db, profile.id, "ask", notes);
   const ctx = await context(db, profile.id, thread);
   const prog = await currentProgram(db, profile.id);
-  const history = await db.select().from(chatMessages).where(and(eq(chatMessages.profileId, profile.id), eq(chatMessages.thread, thread))).orderBy(asc(chatMessages.createdAt));
+  // Only the last 8 messages go to the AI, so only those are loaded.
+  const history = (
+    await db.select().from(chatMessages).where(and(eq(chatMessages.profileId, profile.id), eq(chatMessages.thread, thread))).orderBy(desc(chatMessages.createdAt)).limit(8)
+  ).reverse();
   let reply: string;
   try {
     reply = await chatAgent({

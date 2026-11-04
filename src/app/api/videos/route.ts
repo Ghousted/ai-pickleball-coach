@@ -1,11 +1,11 @@
-import { and, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, sql } from "drizzle-orm";
 import { z } from "zod";
 import { HttpError, requireProfile } from "@/lib/auth";
 import { schema } from "@/lib/db";
-import { MAX_BYTES, MAX_SECONDS, MAX_VIDEOS } from "@/lib/game";
+import { DAILY, MAX_BYTES, MAX_SECONDS, MAX_VIDEOS } from "@/lib/game";
 import { json, route } from "@/lib/http";
-import { failIfStalled } from "@/lib/services";
-import { blobKey, storageMode } from "@/lib/storage";
+import { failIfStalled, startOfToday } from "@/lib/services";
+import { blobKey, remove, storageMode } from "@/lib/storage";
 
 const { videos, tips, drills, programs } = schema;
 
@@ -39,7 +39,8 @@ const Create = z.object({
   move: z.string().trim().min(1, "Type the move, for example Dink.").max(40),
   contentType: z.string().regex(/^video\//, "That file is not a video."),
   sizeBytes: z.number().int().positive().max(MAX_BYTES, "That clip is over 100 MB. Trim it and try again."),
-  durationSec: z.number().positive().max(MAX_SECONDS + 0.5, `That clip is over ${MAX_SECONDS} seconds. Trim it and try again.`),
+  // null when the browser cannot read the length (some iPhone clips in Chrome). Stored as 0, meaning unknown.
+  durationSec: z.number().positive().max(MAX_SECONDS + 0.5, `That clip is over ${MAX_SECONDS} seconds. Trim it and try again.`).nullable(),
   kind: z.enum(["clip", "grade"]).default("clip"),
   drillId: z.string().optional(),
   resumeId: z.string().optional(),
@@ -55,16 +56,18 @@ export const POST = route(async (req: Request) => {
       .select({ id: drills.id })
       .from(drills)
       .innerJoin(programs, eq(drills.programId, programs.id))
-      .where(and(eq(drills.id, body.drillId ?? ""), eq(programs.profileId, profile.id)));
-    if (!dr) throw new HttpError(404, "Drill not found.");
+      .where(and(eq(drills.id, body.drillId ?? ""), eq(programs.profileId, profile.id), eq(programs.status, "current")));
+    if (!dr) throw new HttpError(404, "This drill is not in your current quest.");
   }
+  const durationSec = body.durationSec ?? 0;
 
   // "Picking up where you left off": a pending row is reused when the player picks the file again.
   if (body.resumeId) {
     const [old] = await db.select().from(videos).where(and(eq(videos.id, body.resumeId), eq(videos.profileId, profile.id), eq(videos.status, "uploading")));
     if (old) {
       const key = blobKey(profile.id, old.id, body.contentType);
-      await db.update(videos).set({ move: body.move, contentType: body.contentType, sizeBytes: body.sizeBytes, durationSec: body.durationSec, blobPath: key, statusAt: new Date() }).where(eq(videos.id, old.id));
+      if (old.blobPath && old.blobPath !== key) await remove([old.blobPath]).catch(() => {}); // a different file type left an old file
+      await db.update(videos).set({ move: body.move, contentType: body.contentType, sizeBytes: body.sizeBytes, durationSec, blobPath: key, statusAt: new Date() }).where(eq(videos.id, old.id));
       return json({ id: old.id, key, mode: storageMode() });
     }
   }
@@ -73,6 +76,12 @@ export const POST = route(async (req: Request) => {
     const [c] = await db.select({ n: sql<number>`count(*)::int` }).from(videos).where(and(eq(videos.profileId, profile.id), eq(videos.kind, "clip")));
     if (c.n >= MAX_VIDEOS) throw new HttpError(409, "Delete a video to add a new one.");
   }
+  const [today] = await db
+    .select({ n: sql<number>`count(*)::int` })
+    .from(videos)
+    .where(and(eq(videos.profileId, profile.id), eq(videos.kind, body.kind), gte(videos.createdAt, startOfToday())));
+  const cap = body.kind === "clip" ? DAILY.clips : DAILY.grades;
+  if (today.n >= cap) throw new HttpError(429, `You've reached today's limit of ${cap} ${body.kind === "clip" ? "uploads" : "drill grades"}. Try again tomorrow.`);
   const id = crypto.randomUUID();
   const key = blobKey(profile.id, id, body.contentType);
   await db.insert(videos).values({
@@ -83,7 +92,7 @@ export const POST = route(async (req: Request) => {
     move: body.move,
     contentType: body.contentType,
     sizeBytes: body.sizeBytes,
-    durationSec: body.durationSec,
+    durationSec,
     blobPath: key,
     status: "uploading",
   });
