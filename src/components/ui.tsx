@@ -2,12 +2,17 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import type { CSSProperties, ReactNode } from "react";
+import { goBack } from "@/lib/client";
 import { fmt } from "@/lib/game";
 import { Icon, Logo } from "./icons";
 
-export function TopBar({ title, back, right, sticky }: { title: ReactNode; back?: string | (() => void); right?: ReactNode; sticky?: boolean }) {
+/**
+ * `back`: a route to go to, a function, or `{ fallback }` to go back in history
+ * (or to the fallback after a refresh or a deep link).
+ */
+export function TopBar({ title, back, right, sticky }: { title: ReactNode; back?: string | (() => void) | { fallback: string }; right?: ReactNode; sticky?: boolean }) {
   const router = useRouter();
-  const onBack = () => (typeof back === "function" ? back() : back ? router.push(back) : router.back());
+  const onBack = () => (typeof back === "function" ? back() : typeof back === "string" ? router.push(back) : goBack(router, back?.fallback ?? "/quests"));
   return (
     <div className={`topbar${sticky ? " sticky" : ""}`}>
       {back !== undefined && (
@@ -61,7 +66,7 @@ export function Thumb({ src, dur, w = 68, h = 50 }: { src?: string; dur?: number
   return (
     <div className="thumb" style={{ width: w, height: h }}>
       {src && <video src={`${src}#t=0.5`} preload="metadata" muted playsInline />}
-      {dur !== undefined && <span className="dur">{fmt(dur)}</span>}
+      {dur !== undefined && dur > 0 && <span className="dur">{fmt(dur)}</span>}
     </div>
   );
 }

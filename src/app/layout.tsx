@@ -11,7 +11,7 @@ const fugaz = Fugaz_One({ subsets: ["latin"], weight: "400", variable: "--font-f
 export const metadata: Metadata = {
   title: "AI Coach",
   description: "Film a clip. Get coached. Earn XP.",
-  appleWebApp: { capable: true, title: "AI Coach", statusBarStyle: "black-translucent" },
+  appleWebApp: { capable: true, title: "AI Coach", statusBarStyle: "default" },
   icons: {
     // src/app/favicon.ico adds the .ico link. The SVG is for browsers that prefer it.
     icon: [{ url: "/favicon.svg", type: "image/svg+xml" }],
@@ -23,7 +23,7 @@ export const viewport: Viewport = {
   themeColor: "#042330",
   width: "device-width",
   initialScale: 1,
-  viewportFit: "cover",
+  // No viewport-fit=cover: iOS keeps the app clear of the notch and the home bar by itself.
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

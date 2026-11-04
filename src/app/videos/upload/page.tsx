@@ -21,6 +21,13 @@ function Upload() {
   const [pct, setPct] = useState(0);
   const [err, setErr] = useState<string | null>(null);
   const [pendingId, setPendingId] = useState<string | null>(resume);
+  // A local preview of the picked clip. The old URL is released when a new clip is picked.
+  const [preview, setPreview] = useState<string | null>(null);
+  const showPreview = (f: File | null) =>
+    setPreview((old) => {
+      if (old) URL.revokeObjectURL(old);
+      return f ? URL.createObjectURL(f) : null;
+    });
 
   useEffect(() => {
     if (!resume) return;
@@ -41,6 +48,7 @@ function Upload() {
       return;
     }
     setPicked(info);
+    showPreview(f);
   };
 
   const ready = !!picked && consent && move.trim().length > 0 && !busy;
@@ -64,7 +72,7 @@ function Upload() {
 
   return (
     <div className="screen">
-      <TopBar title="Upload a video" back={() => router.back()} />
+      <TopBar title="Upload a video" back={{ fallback: "/videos" }} />
       <div className="pad">
         {resume && pendingId && (
           <div className="banner">
@@ -114,7 +122,7 @@ function Upload() {
 
         {picked && (
           <div className="card" style={{ display: "flex", alignItems: "center", gap: 14 }}>
-            <Thumb />
+            <Thumb src={preview ?? undefined} dur={picked.durationSec ?? undefined} />
             <div style={{ flex: 1, minWidth: 0 }}>
               <div className="row-title" style={{ fontSize: 15, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                 {picked.name}

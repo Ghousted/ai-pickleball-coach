@@ -10,7 +10,7 @@ import { BADGES, fmt } from "@/lib/game";
 import { inspect, uploadClip, type PickedFile } from "@/lib/upload";
 
 type D = {
-  drill: { id: string; position: number; title: string; how: string; minutes: number; cue: string; day: string; done: boolean };
+  drill: { id: string; position: number; title: string; how: string; minutes: number; cue: string; day: string; done: boolean; flagged: boolean };
   quest: { name: string; badge: string; done: number; current: boolean };
   fixes: { title: string; time: string; videoId: string; flagged: boolean } | null;
   nextDrillId: string | null;
@@ -21,7 +21,7 @@ type RewardRes = { reward: { xp: number; badge: string | null; qn?: number; ques
 export default function Drill() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
-  const { data, error, reload } = useApi<D>(`/api/drills/${id}`);
+  const { data, error, reload, setData } = useApi<D>(`/api/drills/${id}`);
   const total = (data?.drill.minutes ?? 5) * 60;
   const [left, setLeft] = useState<number | null>(null);
   const [on, setOn] = useState(false);
@@ -32,21 +32,24 @@ export default function Drill() {
 
   useEffect(() => () => clearInterval(t.current), []);
   const remain = left ?? total;
+  // The time left comes from a clock time, not from counting ticks, so it stays right while the phone is locked.
+  const endsAt = useRef(0);
   const toggle = () => {
     if (on) {
       clearInterval(t.current);
       return setOn(false);
     }
     setOn(true);
-    t.current = setInterval(() => setLeft((l) => {
-      const v = (l ?? total) - 1;
+    endsAt.current = Date.now() + remain * 1000;
+    const tick = () => {
+      const v = Math.max(0, Math.ceil((endsAt.current - Date.now()) / 1000));
+      setLeft(v);
       if (v <= 0) {
         clearInterval(t.current);
         setOn(false);
-        return 0;
       }
-      return v;
-    }), 1000);
+    };
+    t.current = setInterval(tick, 250);
   };
   const reset = () => {
     clearInterval(t.current);
@@ -167,7 +170,20 @@ export default function Drill() {
           <span>Film it for a grade</span>
           <span className="xp-tag sm">+30 XP</span>
         </button>
-        <div style={{ textAlign: "center", fontSize: 12, color: "rgba(255,255,255,.55)" }}>Warm up first. Stop if anything hurts.</div>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
+          <span style={{ fontSize: 12, color: "rgba(255,255,255,.55)" }}>Warm up first. Stop if anything hurts.</span>
+          <button
+            onClick={async () => {
+              const flagged = !d.flagged;
+              setData({ ...data, drill: { ...d, flagged } });
+              await api(`/api/drills/${id}`, { method: "PATCH", body: { flagged } }).catch(() => setData(data));
+            }}
+            style={{ display: "flex", alignItems: "center", gap: 6, background: "transparent", border: "none", color: d.flagged ? "var(--gold)" : "rgba(255,255,255,.7)", fontWeight: 600, fontSize: 12, cursor: "pointer", fontFamily: "inherit", flexShrink: 0 }}
+          >
+            <Icon n="flag" size={16} />
+            {d.flagged ? "Flagged · undo" : "This looks wrong"}
+          </button>
+        </div>
       </div>
       {sheet && <GradeSheet drillId={d.id} title={d.title} onClose={() => setSheet(false)} />}
     </div>
@@ -180,6 +196,7 @@ function GradeSheet({ drillId, title, onClose }: { drillId: string; title: strin
   const [picked, setPicked] = useState<PickedFile | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [pct, setPct] = useState<number | null>(null);
+  const [pendingId, setPendingId] = useState<string | null>(null);
 
   const onFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const f = e.target.files?.[0];
@@ -194,22 +211,29 @@ function GradeSheet({ drillId, title, onClose }: { drillId: string; title: strin
     setErr(null);
     setPct(0);
     try {
-      const vid = await uploadClip(picked, { move: title, kind: "grade", drillId }, setPct);
+      const vid = await uploadClip(picked, { move: title, kind: "grade", drillId, resumeId: pendingId ?? undefined }, setPct);
       router.push(`/videos/${vid}?watch=1`);
     } catch (e) {
       setErr((e as ApiError).message);
       setPct(null);
+      // Reuse the same upload row on "Try again", so no hidden half-uploaded row is left behind.
+      try {
+        const p = JSON.parse(sessionStorage.getItem("coach:pending-upload") || "null");
+        if (p?.id) setPendingId(p.id);
+      } catch {}
     }
   };
+  const uploading = pct !== null;
+  const close = () => !uploading && onClose();
 
   return (
     <>
-      <div className="scrim" onClick={onClose} />
+      <div className="scrim" onClick={close} />
       <div className="sheet" style={{ gap: 12, padding: "10px 18px 22px" }}>
         <div className="grabber" style={{ marginBottom: 0 }} />
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
           <div className="h-section lg">Get it graded</div>
-          <button className="icon-btn light" onClick={onClose} aria-label="Close">
+          <button className="icon-btn light" onClick={close} disabled={uploading} aria-label="Close">
             <Icon n="x" />
           </button>
         </div>

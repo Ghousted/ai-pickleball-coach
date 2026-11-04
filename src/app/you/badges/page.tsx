@@ -1,14 +1,13 @@
 "use client";
-import { useRouter } from "next/navigation";
 import { Icon } from "@/components/icons";
 import { useMe } from "@/components/shell";
-import { Loading, TopBar } from "@/components/ui";
+import { ErrorState, Loading, TopBar } from "@/components/ui";
 import { BADGES } from "@/lib/game";
 
 /** 25 Badges. */
 export default function Badges() {
-  const router = useRouter();
-  const { me } = useMe();
+  const { me, meError, reload } = useMe();
+  if (meError && !me) return <ErrorState message={meError} retry={reload} />;
   if (!me?.profile) return <Loading />;
   const qp = me.questProgress ?? {};
   const prog: Record<string, number> = {
@@ -23,7 +22,7 @@ export default function Badges() {
 
   return (
     <div className="screen">
-      <TopBar title="Badges" back={() => router.back()} right={<span className="pill pill-gold">{count} of {BADGES.length}</span>} />
+      <TopBar title="Badges" back={{ fallback: "/you" }} right={<span className="pill pill-gold">{count} of {BADGES.length}</span>} />
       <div className="col" style={{ padding: 16, display: "grid", gridTemplateColumns: "repeat(3,minmax(0,1fr))", gap: 10 }}>
         {BADGES.map((b) => {
           const at = me.badges?.[b.id];

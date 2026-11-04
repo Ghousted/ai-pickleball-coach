@@ -1,18 +1,18 @@
 "use client";
 import Link from "next/link";
-import { useParams, useRouter, useSearchParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import { Suspense, useEffect, useRef, useState } from "react";
 import { Icon } from "@/components/icons";
 import { Reviewing, Reward } from "@/components/reviewing";
 import { useMe } from "@/components/shell";
 import { Avatar, ErrorState, Loading, Note, TopBar } from "@/components/ui";
-import { api, ApiError, useApi } from "@/lib/client";
+import { api, ApiError, notify, useApi } from "@/lib/client";
 import { BADGES, fmt } from "@/lib/game";
 
 type Tip = { id: string; timeSec: number; time: string; title: string; saw: string; try: string; cue: string; flagged: boolean };
 type Data = {
   video: { id: string; kind: string; drillId: string | null; move: string; status: string; durationSec: number; statusAt: string; src: string };
-  review: { usable: boolean; unusableReason: string | null; subject: string | null; reward: { xp: number; badge: string | null } | null } | null;
+  review: { usable: boolean; unusableReason: string | null; subject: string | null; reward: { xp: number; badge: string | null; levelUp: string | null } | null } | null;
   tips: Tip[];
   otherReviewed: string[];
   notMedical: string;
@@ -23,13 +23,11 @@ const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 function VideoScreen() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
-  const watch = useSearchParams().get("watch") === "1";
   const { me, reload: reloadMe } = useMe();
   const { data, error, reload, setData } = useApi<Data>(`/api/videos/${id}`, {
     pollMs: 2500,
     poll: (d) => d.video.status === "reviewing" || d.video.status === "uploaded",
   });
-  const [sawWaiting, setSawWaiting] = useState(false);
   const [showReward, setShowReward] = useState(false);
   const status = data?.video.status;
   // XP and badges change when a review finishes, so refresh the header then.
@@ -37,30 +35,36 @@ function VideoScreen() {
     if (status && status !== "reviewing" && status !== "uploaded") reloadMe();
   }, [status, reloadMe]);
 
-  // Syncs with polled server data and sessionStorage, which only exist outside render.
+  // The reward shows once per review, also when the player left the waiting screen and came back later.
+  // It reads localStorage, which only exists outside render.
   /* eslint-disable react-hooks/set-state-in-effect */
   useEffect(() => {
-    if (status === "reviewing" || status === "uploaded") setSawWaiting(true);
-    if (status === "reviewed" && (sawWaiting || watch) && data?.review?.reward) {
+    if (status === "reviewed" && data?.video.kind === "clip" && data.review?.reward) {
       const key = `coach:rewarded:${id}`;
       try {
-        if (!sessionStorage.getItem(key)) {
-          sessionStorage.setItem(key, "1");
+        if (!localStorage.getItem(key)) {
+          localStorage.setItem(key, "1");
           setShowReward(true);
         }
-      } catch {
-        setShowReward(sawWaiting);
-      }
+      } catch {}
     }
     if (status === "uploading") router.replace(`/videos/upload?resume=${id}`);
     if (status === "reviewed" && data?.video.kind === "grade" && data.video.drillId) router.replace(`/drills/${data.video.drillId}/grade`);
-  }, [status, sawWaiting, watch, data, id, router]);
+  }, [status, data, id, router]);
   /* eslint-enable react-hooks/set-state-in-effect */
 
-  const leave = () => router.push(data?.video.kind === "grade" && data.video.drillId ? `/quests/path` : "/videos");
+  const isGrade = data?.video.kind === "grade" && !!data.video.drillId;
+  // A drill clip belongs to its drill, not to the Videos tab.
+  const home = isGrade ? `/drills/${data!.video.drillId}` : "/videos";
+  const leave = () => router.push(isGrade ? "/quests/path" : "/videos");
   const del = async () => {
-    await api(`/api/videos/${id}`, { method: "DELETE" });
-    router.replace("/videos");
+    try {
+      await api(`/api/videos/${id}`, { method: "DELETE" });
+      router.replace(home);
+    } catch (e) {
+      notify((e as ApiError).message);
+      throw e;
+    }
   };
 
   if (error) return <ErrorState message={error.message} retry={reload} />;
@@ -78,6 +82,7 @@ function VideoScreen() {
         title={`Nice work, ${me?.profile?.name ?? ""}`}
         badge={r.badge}
         badgeIcon={BADGES.find((b) => b.name === r.badge)?.icon}
+        levelUp={r.levelUp}
         cta="See your tips"
         onNext={() => {
           setShowReward(false);
@@ -87,25 +92,26 @@ function VideoScreen() {
     );
   }
 
-  if (v.status === "failed") return <Failed id={id} onDone={reload} onDelete={del} />;
-  if (v.status === "unusable") return <CantReview reason={data.review?.unusableReason ?? null} onDelete={del} />;
+  if (v.status === "failed") return <Failed id={id} home={home} onDone={reload} onDelete={del} />;
+  if (v.status === "unusable") return <CantReview reason={data.review?.unusableReason ?? null} home={home} grade={isGrade} onDelete={del} />;
   if (v.kind === "grade") return <Loading />;
   return <Tips data={data} setData={setData} onDelete={del} />;
 }
 
 /* ---------------- 10 Review tips ---------------- */
 
-function Tips({ data, setData, onDelete }: { data: Data; setData: (d: Data) => void; onDelete: () => void }) {
+function Tips({ data, setData, onDelete }: { data: Data; setData: (d: Data) => void; onDelete: () => Promise<void> }) {
   const router = useRouter();
   const { me } = useMe();
   const { data: quests } = useApi<{ current: { id: string } | null }>("/api/quests");
   const videoRef = useRef<HTMLVideoElement>(null);
   const [pos, setPos] = useState(0);
+  const [mediaDur, setMediaDur] = useState(0);
   const [playing, setPlaying] = useState(false);
   const [open, setOpen] = useState(true);
-  const [confirm, setConfirm] = useState(false);
   const v = data.video;
-  const dur = v.durationSec || 1;
+  // The stored length can be unknown (0). Then the video element gives it once it loads.
+  const dur = v.durationSec || mediaDur || 1;
   const active = data.tips.filter((t) => !t.flagged);
 
   const seek = (s: number) => {
@@ -151,6 +157,7 @@ function Tips({ data, setData, onDelete }: { data: Data; setData: (d: Data) => v
             preload="metadata"
             onClick={toggle}
             onTimeUpdate={(e) => setPos(e.currentTarget.currentTime)}
+            onLoadedMetadata={(e) => Number.isFinite(e.currentTarget.duration) && setMediaDur(e.currentTarget.duration)}
             onPlay={() => setPlaying(true)}
             onPause={() => setPlaying(false)}
             style={{ width: "100%", height: "100%", objectFit: "contain", display: "block", background: "#000" }}
@@ -285,10 +292,7 @@ function Tips({ data, setData, onDelete }: { data: Data; setData: (d: Data) => v
         <button className="btn btn-primary" onClick={() => router.push(quests?.current ? "/quests/path" : "/quests/choose")}>
           {quests?.current ? "Go to your quest" : "Pick your quest"}
         </button>
-        {confirm && <div style={{ fontSize: 13, fontWeight: 700, color: "var(--red)", textAlign: "center" }}>Tap again to delete this video, its review and its tips.</div>}
-        <button className="link danger" style={{ padding: "4px 0 8px" }} onClick={() => (confirm ? onDelete() : setConfirm(true))}>
-          Delete this video
-        </button>
+        <DeleteVideo onDelete={onDelete} />
       </div>
     </div>
   );
@@ -296,7 +300,30 @@ function Tips({ data, setData, onDelete }: { data: Data; setData: (d: Data) => v
 
 /* ---------------- 16 Can't review ---------------- */
 
-function CantReview({ reason, onDelete }: { reason: string | null; onDelete: () => void }) {
+/** Delete asks first (PRD), shows that it is busy, and stays usable after an error. */
+function DeleteVideo({ onDelete }: { onDelete: () => Promise<void> }) {
+  const [confirm, setConfirm] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const go = async () => {
+    if (!confirm) return setConfirm(true);
+    setBusy(true);
+    try {
+      await onDelete();
+    } catch {
+      setBusy(false);
+    }
+  };
+  return (
+    <>
+      {confirm && <div style={{ fontSize: 13, fontWeight: 700, color: "var(--red)", textAlign: "center" }}>Tap again to delete this video and its review.</div>}
+      <button className="link danger" style={{ padding: "4px 0 8px" }} disabled={busy} onClick={go}>
+        {busy ? "Deleting…" : "Delete this video"}
+      </button>
+    </>
+  );
+}
+
+function CantReview({ reason, home, grade, onDelete }: { reason: string | null; home: string; grade: boolean; onDelete: () => Promise<void> }) {
   const router = useRouter();
   const list: [string, string][] = [
     ["camera", "Film sideways"],
@@ -306,7 +333,7 @@ function CantReview({ reason, onDelete }: { reason: string | null; onDelete: () 
   ];
   return (
     <div className="screen">
-      <TopBar title="Review" back="/videos" />
+      <TopBar title="Review" back={home} />
       <div className="pad g12">
         <div style={{ padding: "4px 0", display: "flex", flexDirection: "column", alignItems: "center", gap: 8, textAlign: "center" }}>
           <div className="dot-icon" style={{ width: 56, height: 56, background: "#fbe3e7", color: "var(--red)" }}>
@@ -328,12 +355,10 @@ function CantReview({ reason, onDelete }: { reason: string | null; onDelete: () 
             </div>
           </div>
         ))}
-        <button className="btn btn-primary" style={{ marginTop: 4 }} onClick={() => router.push("/videos/upload")}>
-          Upload another video
+        <button className="btn btn-primary" style={{ marginTop: 4 }} onClick={() => router.push(home === "/videos" ? "/videos/upload" : home)}>
+          {grade ? "Back to the drill" : "Upload another video"}
         </button>
-        <button className="link danger" onClick={onDelete}>
-          Delete this video
-        </button>
+        <DeleteVideo onDelete={onDelete} />
       </div>
     </div>
   );
@@ -341,7 +366,7 @@ function CantReview({ reason, onDelete }: { reason: string | null; onDelete: () 
 
 /* ---------------- 17 Review failed ---------------- */
 
-function Failed({ id, onDone, onDelete }: { id: string; onDone: () => void; onDelete: () => void }) {
+function Failed({ id, home, onDone, onDelete }: { id: string; home: string; onDone: () => void; onDelete: () => Promise<void> }) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const retry = async () => {
@@ -357,7 +382,7 @@ function Failed({ id, onDone, onDelete }: { id: string; onDone: () => void; onDe
   };
   return (
     <div className="screen">
-      <TopBar title="Review" back="/videos" />
+      <TopBar title="Review" back={home} />
       <div className="pad">
         <div style={{ padding: "4px 0", display: "flex", flexDirection: "column", alignItems: "center", gap: 8, textAlign: "center" }}>
           <div className="dot-icon" style={{ width: 56, height: 56, background: "#fbe3e7", color: "var(--red)" }}>
@@ -370,9 +395,7 @@ function Failed({ id, onDone, onDelete }: { id: string; onDone: () => void; onDe
         <button className="btn btn-primary" disabled={busy} onClick={retry}>
           Try the review again
         </button>
-        <button className="link danger" onClick={onDelete}>
-          Delete this video
-        </button>
+        <DeleteVideo onDelete={onDelete} />
       </div>
     </div>
   );

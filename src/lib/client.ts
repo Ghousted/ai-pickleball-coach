@@ -42,49 +42,82 @@ export function notify(notes: string | string[]) {
   window.dispatchEvent(new CustomEvent("coach:notes", { detail: list }));
 }
 
-/** Fetches JSON. Pass pollMs to keep polling while `poll(data)` is true. */
+/**
+ * Fetches JSON. Pass pollMs to keep polling while `poll(data)` is true.
+ * Every load (also `reload` after "Try again") checks again whether to poll, so polling
+ * restarts by itself. A failed poll keeps the last data on screen and retries with a backoff.
+ */
 export function useApi<T>(url: string | null, opts?: { pollMs?: number; poll?: (d: T) => boolean }) {
-  const [data, setData] = useState<T | null>(null);
+  const [data, setDataState] = useState<T | null>(null);
   const [error, setError] = useState<ApiError | null>(null);
   const [loading, setLoading] = useState(!!url);
   const optsRef = useRef(opts);
+  const dataRef = useRef<T | null>(null);
+  const timer = useRef<ReturnType<typeof setTimeout>>(undefined);
+  const alive = useRef(true);
+  const fails = useRef(0);
+  const loadRef = useRef<() => Promise<T | undefined>>(async () => undefined);
   useEffect(() => {
     optsRef.current = opts;
   });
 
+  const setData = useCallback((d: T | null) => {
+    dataRef.current = d;
+    setDataState(d);
+  }, []);
+
   const load = useCallback(async () => {
     if (!url) return;
+    clearTimeout(timer.current);
+    let d: T | undefined;
     try {
-      const d = await api<T>(url);
+      d = await api<T>(url);
+      fails.current = 0;
       setData(d);
       setError(null);
-      return d;
     } catch (e) {
-      setError(e as ApiError);
+      fails.current++;
+      if (!dataRef.current) setError(e as ApiError);
     } finally {
       setLoading(false);
     }
-  }, [url]);
+    const o = optsRef.current;
+    const last = d ?? dataRef.current;
+    if (alive.current && o?.pollMs && last && o.poll?.(last)) {
+      timer.current = setTimeout(() => loadRef.current(), o.pollMs * Math.min(8, 2 ** fails.current));
+    }
+    return d;
+  }, [url, setData]);
 
   useEffect(() => {
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    let alive = true;
-    const tick = async () => {
-      const d = await load();
-      const o = optsRef.current;
-      if (alive && o?.pollMs && d && o.poll?.(d)) timer = setTimeout(tick, o.pollMs);
-    };
-    tick();
+    loadRef.current = load;
+  }, [load]);
+
+  useEffect(() => {
+    alive.current = true;
+    load(); // eslint-disable-line react-hooks/set-state-in-effect -- the fetch result arrives later, not during this render
     const onRefresh = () => load();
     window.addEventListener("coach:refresh", onRefresh);
     return () => {
-      alive = false;
-      clearTimeout(timer);
+      alive.current = false;
+      clearTimeout(timer.current);
       window.removeEventListener("coach:refresh", onRefresh);
     };
   }, [load]);
 
   return { data, error, loading, reload: load, setData };
+}
+
+/* True once the player has moved between screens in this page load. After a refresh or a deep link it is false. */
+let navigatedInApp = false;
+export const markInAppNavigation = () => {
+  navigatedInApp = true;
+};
+
+/** Back that works after a refresh or a deep link: goes to `fallback` when there is no screen to go back to. */
+export function goBack(router: { back: () => void; push: (href: string) => void }, fallback: string) {
+  if (navigatedInApp) router.back();
+  else router.push(fallback);
 }
 
 export const timeAgo = (iso: string | Date) => {

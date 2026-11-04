@@ -52,11 +52,13 @@ export default function Landing() {
     const res = su
       ? await authClient.signUp.email({ name: f.name.trim(), email: f.email.trim(), password: f.pass })
       : await authClient.signIn.email({ email: f.email.trim(), password: f.pass });
-    setBusy(false);
     if (res.error) {
+      setBusy(false);
       const code = res.error.code ?? "";
       setErr(
-        code.includes("USER_ALREADY_EXISTS") || code.includes("ALREADY")
+        res.error.status === 429
+          ? "Too many tries. Wait a minute and try again."
+          : code.includes("USER_ALREADY_EXISTS") || code.includes("ALREADY")
           ? "That email already has an account. Sign in instead."
           : code.includes("INVALID_EMAIL_OR_PASSWORD") || res.error.status === 401
             ? "That email and password don't match."
